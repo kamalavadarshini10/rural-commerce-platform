@@ -30,8 +30,15 @@ def apply_delivery_outcome(delivery_id, data):
     attempt_number = delivery['attempt_number']
     timestamp = datetime.now().isoformat()
 
-    update_db("UPDATE Deliveries SET status = ? WHERE id = ?",
-              ('COMPLETED' if outcome == 'SUCCESS' else 'FAILED', delivery_id))
+    update_db(
+        """
+        UPDATE Deliveries
+        SET status = ?,
+             sync_version = sync_version + 1
+        WHERE id = ?
+        """,
+        ('COMPLETED' if outcome == 'SUCCESS' else 'FAILED', delivery_id)
+    )
 
     insert_db("""
         INSERT INTO DeliveryOutcomes

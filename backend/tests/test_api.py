@@ -247,31 +247,141 @@ def test_customer_update_creates_new_version(client):
 
 # 12. Offline synchronization -----------------------------------------------------------
 
+# 12. Offline synchronization -----------------------------------------------------------
+
 def test_offline_sync_replays_queued_outcomes(client):
+    import sqlite3
+
+    # Start this test with a clean version.
+    db = sqlite3.connect('database/ruralroute.db')
+    db.execute(
+        "UPDATE Deliveries SET status = 'PENDING', sync_version = 1 WHERE id = 6"
+    )
+    db.commit()
+    db.close()
+
     payload = [
         {
             "type": "delivery_outcome",
             "delivery_id": 6,
-            "payload": {"outcome": "SUCCESS", "note": "Synced after reconnecting"}
+            "sync_version": 1,
+            "payload": {
+                "outcome": "SUCCESS",
+                "note": "Synced after reconnecting"
+            }
         }
     ]
+
     rv = client.post('/api/sync', json=payload)
+
     assert rv.status_code == 200
+
     body = rv.get_json()
+
     assert body['success'] is True
     assert body['synced_count'] == 1
+    assert body['conflict_count'] == 0
 
     d = client.get('/api/deliveries/6').get_json()
+
+    assert d['status'] == 'COMPLETED'
+
+
+def test_offline_sync_detects_version_conflict(client):
+    # Reset delivery 6 so this test is independent of earlier tests.
+    import sqlite3
+
+    db = sqlite3.connect('database/ruralroute.db')
+    db.execute(
+        "UPDATE Deliveries SET status = 'PENDING', sync_version = 1 WHERE id = 6"
+    )
+    db.commit()
+    db.close()
+
+    # First update: client and server are both on version 1.
+    first_payload = [
+        {
+            "type": "delivery_outcome",
+            "delivery_id": 6,
+            "sync_version": 1,
+            "payload": {
+                "outcome": "SUCCESS"
+            }
+        }
+    ]
+
+    first = client.post('/api/sync', json=first_payload)
+
+    assert first.status_code == 200
+
+    first_body = first.get_json()
+
+    assert first_body['synced_count'] == 1
+    assert first_body['conflict_count'] == 0
+
+    # The successful sync increments the server to version 2.
+    db = sqlite3.connect('database/ruralroute.db')
+    version = db.execute(
+        "SELECT sync_version FROM Deliveries WHERE id = 6"
+    ).fetchone()[0]
+    db.close()
+
+    assert version == 2
+
+    # Second update is stale: it was created when the client
+    # still had version 1.
+    old_payload = [
+        {
+            "type": "delivery_outcome",
+            "delivery_id": 6,
+            "sync_version": 1,
+            "payload": {
+                "outcome": "FAILURE",
+                "note": "Old offline update"
+            }
+        }
+    ]
+
+    rv = client.post('/api/sync', json=old_payload)
+
+    assert rv.status_code == 200
+
+    body = rv.get_json()
+
+    assert body['success'] is False
+    assert body['conflict_count'] == 1
+    assert body['synced_count'] == 0
+
+    conflict = body['conflicts'][0]
+
+    assert conflict['delivery_id'] == 6
+    assert conflict['client_version'] == 1
+    assert conflict['server_version'] == 2
+
+    # The stale FAILURE must NOT overwrite the successful server state.
+    d = client.get('/api/deliveries/6').get_json()
+
     assert d['status'] == 'COMPLETED'
 
 
 def test_offline_sync_reports_failure_for_bad_delivery_id(client):
     payload = [
-        {"type": "delivery_outcome", "delivery_id": 999999, "payload": {"outcome": "SUCCESS"}}
+        {
+            "type": "delivery_outcome",
+            "delivery_id": 999999,
+            "sync_version": 1,
+            "payload": {
+                "outcome": "SUCCESS"
+            }
+        }
     ]
+
     rv = client.post('/api/sync', json=payload)
+
     assert rv.status_code == 200
+
     body = rv.get_json()
+
     assert body['success'] is False
     assert len(body['failed']) == 1
 
@@ -299,3 +409,74 @@ def test_capture_new_instruction(client):
     })
     assert rv.status_code == 201
     assert 'instruction_id' in rv.get_json()
+
+def test_online_update_invalidates_old_offline_version(client):
+    import sqlite3
+
+    # Start with a known version.
+    db = sqlite3.connect('database/ruralroute.db')
+    db.execute(
+        "UPDATE Deliveries SET status = 'PENDING', sync_version = 1 WHERE id = 6"
+    )
+    db.commit()
+    db.close()
+
+    # Simulate an ONLINE delivery update.
+    online_payload = {
+        "outcome": "SUCCESS",
+        "note": "Completed while device was online"
+    }
+
+    rv = client.post(
+        '/api/deliveries/6/outcome',
+        json=online_payload
+    )
+
+    assert rv.status_code == 200
+
+    # Online update should have increased the version.
+    db = sqlite3.connect('database/ruralroute.db')
+    version = db.execute(
+        "SELECT sync_version FROM Deliveries WHERE id = 6"
+    ).fetchone()[0]
+    db.close()
+
+    assert version == 2
+
+    # Now an old offline device tries to sync version 1.
+    old_offline_payload = [
+        {
+            "type": "delivery_outcome",
+            "delivery_id": 6,
+            "sync_version": 1,
+            "payload": {
+                "outcome": "FAILURE",
+                "note": "Old offline result"
+            }
+        }
+    ]
+
+    rv = client.post(
+        '/api/sync',
+        json=old_offline_payload
+    )
+
+    assert rv.status_code == 200
+
+    body = rv.get_json()
+
+    # The old update must be rejected as a conflict.
+    assert body['success'] is False
+    assert body['synced_count'] == 0
+    assert body['conflict_count'] == 1
+
+    conflict = body['conflicts'][0]
+
+    assert conflict['delivery_id'] == 6
+    assert conflict['client_version'] == 1
+    assert conflict['server_version'] == 2
+
+    # The newer online SUCCESS must remain unchanged.
+    delivery = client.get('/api/deliveries/6').get_json()
+
+    assert delivery['status'] == 'COMPLETED'

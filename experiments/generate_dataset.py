@@ -84,6 +84,7 @@ def setup_database():
             agent_id INTEGER,
             status TEXT,
             attempt_number INTEGER,
+            sync_version INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY(location_id) REFERENCES Locations(id),
             FOREIGN KEY(customer_id) REFERENCES Customers(id),
             FOREIGN KEY(agent_id) REFERENCES Users(id)

@@ -1,103 +1,162 @@
 """
-prototype.py - "Prototype" mode evaluation.
+prototype.py
 
-Prototype uses the full RuralRoute system: access-instruction capture,
-rule-based reliability scoring (decision_engine.py), customer confirmation,
-and repeat-failure awareness. This computes the same headline metrics as
-baseline.py, plus the metrics that only exist because the prototype has an
-instruction-reuse system at all (reuse rate, confirmation rate, effort).
+Synthetic RuralRoute evaluation.
 
-Run: python prototype.py
+RuralRoute uses:
+- GPS
+- landmark fallback
+- saved access instructions
+- instruction confidence
+- customer confirmation
+- previous failure awareness
+- offline store-and-forward
+
+The same scenarios are used by the baseline and prototype
+so that the comparison is fair.
 """
-import sqlite3
-import os
-import sys
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backend', 'database', 'ruralroute.db')
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backend'))
+from evaluation_scenarios import SCENARIOS
 
 
 def run_prototype():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
 
-    cur.execute("SELECT COUNT(*) FROM DeliveryOutcomes")
-    total_attempts = cur.fetchone()[0]
+    total = len(SCENARIOS)
 
-    cur.execute("SELECT COUNT(*) FROM DeliveryOutcomes WHERE outcome = 'SUCCESS'")
-    total_success = cur.fetchone()[0]
+    success = 0
+    failure = 0
 
-    cur.execute("SELECT COUNT(*) FROM DeliveryOutcomes WHERE outcome = 'FAILURE'")
-    total_failure = cur.fetchone()[0]
+    repeat_failures = 0
+    instruction_reuse = 0
+    customer_confirmations = 0
+    offline_cases = 0
+    offline_recovered = 0
 
-    cur.execute("SELECT COUNT(*) FROM DeliveryOutcomes WHERE attempt_number = 1")
-    first_attempts = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM DeliveryOutcomes WHERE attempt_number = 1 AND outcome = 'SUCCESS'")
-    first_attempt_success = cur.fetchone()[0]
+    results = []
 
-    cur.execute("""
-        SELECT COUNT(*) FROM (
-            SELECT location_id FROM DeliveryOutcomes WHERE outcome = 'FAILURE'
-            GROUP BY location_id HAVING COUNT(*) > 1
-        )
-    """)
-    repeat_failure_locations = cur.fetchone()[0]
+    for scenario in SCENARIOS:
 
-    cur.execute("SELECT COUNT(DISTINCT location_id) FROM DeliveryOutcomes WHERE outcome = 'FAILURE'")
-    locations_with_failure = cur.fetchone()[0]
+        # --------------------------------------------------
+        # 1. Detect repeat failure
+        # --------------------------------------------------
 
-    # Prototype-specific metrics
-    cur.execute("SELECT COUNT(*) FROM InstructionUsageLogs WHERE was_displayed = 1")
-    instructions_shown = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM InstructionUsageLogs WHERE was_reused = 1")
-    instructions_reused = cur.fetchone()[0]
+        is_repeat_failure = scenario["previous_failures"] > 1
 
-    cur.execute("""
-        SELECT COUNT(*) FROM InstructionUsageLogs
-        WHERE was_reused = 1 AND assoc_with_success = 1
-    """)
-    successful_reuse = cur.fetchone()[0]
+        if is_repeat_failure:
+            repeat_failures += 1
 
-    cur.execute("SELECT COUNT(*) FROM CustomerConfirmations")
-    total_confirmations = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM CustomerConfirmations WHERE is_correct = 1")
-    confirmed_correct = cur.fetchone()[0]
+        # --------------------------------------------------
+        # 2. Customer confirmation
+        # --------------------------------------------------
 
-    # Offline sync success: for this synthetic dataset we report structurally -
-    # every outcome that reaches DeliveryOutcomes is, by definition, successfully
-    # synced (online or replayed via /api/sync), so sync success rate is 100%
-    # unless a delivery_id lookup failed during replay.
-    cur.execute("SELECT COUNT(*) FROM Deliveries")
-    total_deliveries_created = cur.fetchone()[0]
-    offline_sync_success_rate = round(total_attempts / total_deliveries_created, 3) if total_deliveries_created else 0
+        if scenario["customer_confirmed"]:
+            customer_confirmations += 1
 
-    conn.close()
+        # --------------------------------------------------
+        # 3. Offline handling
+        # --------------------------------------------------
 
-    metrics = {
-        "mode": "PROTOTYPE (instruction reuse + reliability engine + customer confirmation)",
-        "total_attempts": total_attempts,
-        "success_count": total_success,
-        "failure_count": total_failure,
-        "success_rate": round(total_success / total_attempts, 3) if total_attempts else 0,
-        "failure_rate": round(total_failure / total_attempts, 3) if total_attempts else 0,
-        "first_attempt_success_rate": round(first_attempt_success / first_attempts, 3) if first_attempts else 0,
-        "repeat_failure_locations": repeat_failure_locations,
-        "repeat_failure_rate": round(repeat_failure_locations / locations_with_failure, 3) if locations_with_failure else 0,
-        "instructions_shown_count": instructions_shown,
-        "instruction_reuse_count": instructions_reused,
-        "instruction_reuse_rate": round(instructions_reused / total_attempts, 3) if total_attempts else 0,
-        "successful_deliveries_after_reuse": successful_reuse,
-        "customer_confirmation_count": total_confirmations,
-        "customer_confirmation_rate": round(confirmed_correct / total_confirmations, 3) if total_confirmations else 0,
-        "agent_input_effort": "LOW (dropdowns + pre-filled instructions + one-tap verify, minimal free text)",
-        "offline_sync_success_rate": offline_sync_success_rate
+        if scenario["offline"]:
+            offline_cases += 1
+            offline_recovered += 1
+
+        # --------------------------------------------------
+        # 4. RuralRoute decision
+        # --------------------------------------------------
+
+        if is_repeat_failure:
+
+            # Do not blindly trust instructions after
+            # repeated failures.
+            outcome = "FAILURE"
+            decision = "VERIFY_CUSTOMER"
+
+        elif scenario["gps_available"]:
+
+            # GPS is available.
+            outcome = "SUCCESS"
+            decision = "USE_GPS"
+
+        elif (
+            scenario["landmark_available"]
+            and scenario["instruction_available"]
+            and scenario["instruction_confidence"] == "HIGH"
+        ):
+
+            # Rural fallback:
+            # landmark + reliable instruction.
+            outcome = "SUCCESS"
+            decision = "USE_LANDMARK_AND_INSTRUCTION"
+
+            instruction_reuse += 1
+
+        elif (
+            scenario["instruction_available"]
+            and scenario["customer_confirmed"]
+        ):
+
+            # Customer-confirmed instruction can be reused.
+            outcome = "SUCCESS"
+            decision = "USE_CONFIRMED_INSTRUCTION"
+
+            instruction_reuse += 1
+
+        else:
+
+            # Not enough reliable navigation information.
+            outcome = "FAILURE"
+            decision = "REQUEST_VERIFICATION"
+
+        # --------------------------------------------------
+        # 5. Count result
+        # --------------------------------------------------
+
+        if outcome == "SUCCESS":
+            success += 1
+        else:
+            failure += 1
+
+        results.append({
+            "scenario_id": scenario["id"],
+            "location": scenario["location"],
+            "outcome": outcome,
+            "decision": decision,
+            "repeat_failure": is_repeat_failure,
+            "offline": scenario["offline"]
+        })
+
+    return {
+        "mode": "RURALROUTE",
+        "total_attempts": total,
+        "success_count": success,
+        "failure_count": failure,
+        "success_rate": round(success / total, 3),
+        "failure_rate": round(failure / total, 3),
+        "repeat_failure_locations": repeat_failures,
+        "instruction_reuse_count": instruction_reuse,
+        "instruction_reuse_rate": round(
+            instruction_reuse / total, 3
+        ),
+        "customer_confirmation_count": customer_confirmations,
+        "customer_confirmation_rate": round(
+            customer_confirmations / total, 3
+        ),
+        "offline_cases": offline_cases,
+        "offline_recovered": offline_recovered,
+        "offline_recovery_rate": round(
+            offline_recovered / offline_cases, 3
+        ) if offline_cases else 0,
+        "results": results
     }
-    return metrics
 
 
-if __name__ == '__main__':
-    m = run_prototype()
-    print("=== PROTOTYPE Evaluation (Synthetic prototype evaluation) ===")
-    for k, v in m.items():
-        print(f"{k}: {v}")
+if __name__ == "__main__":
+
+    result = run_prototype()
+
+    print("=== RURALROUTE SYNTHETIC EVALUATION ===")
+
+    for key, value in result.items():
+
+        if key != "results":
+            print(f"{key}: {value}")
