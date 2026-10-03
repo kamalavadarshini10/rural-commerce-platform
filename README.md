@@ -48,6 +48,28 @@ system. See "Known limitations" below.
 | Evaluation | Python scripts (`experiments/`) |
 | Testing | pytest |
 
+## API Endpoints
+
+The backend exposes the following REST API endpoints:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/auth/login` | Authenticate a user |
+| GET | `/api/deliveries` | Retrieve deliveries |
+| GET | `/api/deliveries/<delivery_id>` | Retrieve a specific delivery |
+| GET | `/api/deliveries/<delivery_id>/instructions` | Retrieve instructions for a delivery |
+| POST | `/api/deliveries/<delivery_id>/outcome` | Record a delivery outcome |
+| GET | `/api/deliveries/failure-reasons` | Retrieve available failure reasons |
+| POST | `/api/instructions` | Create an access instruction |
+| GET | `/api/instructions/customer/<customer_id>` | Retrieve customer instructions |
+| POST | `/api/instructions/<instruction_id>/confirm` | Confirm an instruction |
+| GET | `/api/admin/analytics` | Retrieve delivery analytics |
+| GET | `/api/admin/repeat-failures` | Retrieve repeat-failure information |
+| POST | `/api/sync` | Synchronize offline delivery updates |
+| GET | `/api/locations/<location_id>/instructions` | Retrieve location instructions |
+| POST | `/api/customer-confirmations` | Record customer confirmation |
+
+The `/api/sync` endpoint uses delivery `sync_version` values to detect stale offline updates. Matching versions are synchronized, while older client versions are reported as conflicts and are not applied.
 ## Folder Structure
 
 ```
@@ -97,6 +119,25 @@ instruction, customer-confirmed instruction, MEDIUM-confidence stale
 success, outdated LOW-confidence instruction) without being a large
 synthetic dump.
 
+## Database Schema Summary
+
+The SQLite database contains 11 tables:
+
+| Table | Purpose |
+|---|---|
+| `Users` | Stores application users such as agents and admins |
+| `Customers` | Stores customer details |
+| `Locations` | Stores rural delivery locations and availability information |
+| `AccessInstructions` | Stores active access instructions and confidence scores |
+| `InstructionVersions` | Stores instruction history and confirmation status |
+| `CustomerConfirmations` | Records customer confirmations or updates |
+| `Deliveries` | Stores delivery jobs and their synchronization versions |
+| `FailureReasons` | Stores predefined delivery failure reasons |
+| `DeliveryOutcomes` | Records delivery attempt results |
+| `InstructionUsageLogs` | Records instruction usage during deliveries |
+| `SyncQueue` | Stores offline actions waiting for synchronization |
+
+The full schema and synthetic dataset design are documented in `docs/dataset-schema.md`. The dataset is deterministic and can be regenerated using `python generate_dataset.py` from the `experiments/` directory.
 ## How to Install
 
 Requires Python 3.8+ and Node.js 18+.
@@ -172,7 +213,7 @@ cd backend
 python -m pytest tests/ -v
 ```
 
-28 tests covering login, delivery/instruction retrieval, all three
+39 tests covering login, delivery/instruction retrieval, decision-engine logic, all three
 confidence levels, success/failure recording, repeat-failure detection,
 customer confirmation/versioning, and offline sync. See `docs/testing.md`
 for the full mapping of required test areas to test names.
@@ -210,3 +251,7 @@ All output is explicitly labeled **"Synthetic prototype evaluation"** — see
   `docs/evaluation.md`.
 - **Decision engine recency window (30 days)** is a reasonable, simple
   default for a prototype, not a tuned/validated threshold.
+
+
+
+
