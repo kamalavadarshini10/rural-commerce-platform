@@ -1,7 +1,6 @@
 from database.db import query_db, insert_db, update_db
 from datetime import datetime
 
-
 def apply_delivery_outcome(delivery_id, data):
     """
     Applies a delivery outcome (SUCCESS/FAILURE) to the database.
@@ -12,7 +11,12 @@ def apply_delivery_outcome(delivery_id, data):
     Returns (result_dict, http_status_code)
     """
     outcome = data.get('outcome')  # 'SUCCESS' or 'FAILURE'
+
+    if outcome not in ('SUCCESS', 'FAILURE'):
+        return {"error": "Outcome must be SUCCESS or FAILURE"}, 400
+
     reason_id = data.get('reason_id')
+
     note = data.get('note', '')
     instruction_id = data.get('instruction_id')
     instructions_verified = data.get('instructions_verified', False)

@@ -1,8 +1,15 @@
 import pytest
 import sys
 import os
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+DB_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '..', 'database', 'ruralroute.db')
+)
+
 from app import create_app
+
 
 # Deterministic delivery IDs produced by experiments/generate_dataset.py (random.seed(42)):
 #   6  -> location 1 (no instructions yet)
@@ -25,20 +32,29 @@ def client():
 # 1. Login ---------------------------------------------------------------
 
 def test_login_success_agent(client):
-    rv = client.post('/api/auth/login', json={'username': 'agent@example.com', 'password': 'agent123'})
+    rv = client.post('/api/auth/login', json={
+        'username': 'agent@example.com',
+        'password': 'agent123'
+    })
     assert rv.status_code == 200
     body = rv.get_json()
     assert body['role'] == 'agent'
 
 
 def test_login_success_admin(client):
-    rv = client.post('/api/auth/login', json={'username': 'admin@example.com', 'password': 'admin123'})
+    rv = client.post('/api/auth/login', json={
+        'username': 'admin@example.com',
+        'password': 'admin123'
+    })
     assert rv.status_code == 200
     assert rv.get_json()['role'] == 'admin'
 
 
 def test_login_success_customer(client):
-    rv = client.post('/api/auth/login', json={'username': 'customer@example.com', 'password': 'customer123'})
+    rv = client.post('/api/auth/login', json={
+        'username': 'customer@example.com',
+        'password': 'customer123'
+    })
     assert rv.status_code == 200
     body = rv.get_json()
     assert body['role'] == 'customer'
@@ -46,12 +62,18 @@ def test_login_success_customer(client):
 
 
 def test_login_wrong_password_rejected(client):
-    rv = client.post('/api/auth/login', json={'username': 'agent@example.com', 'password': 'wrong'})
+    rv = client.post('/api/auth/login', json={
+        'username': 'agent@example.com',
+        'password': 'wrong'
+    })
     assert rv.status_code == 401
 
 
 def test_login_unknown_user_rejected(client):
-    rv = client.post('/api/auth/login', json={'username': 'nobody@example.com', 'password': 'x'})
+    rv = client.post('/api/auth/login', json={
+        'username': 'nobody@example.com',
+        'password': 'x'
+    })
     assert rv.status_code == 401
 
 
@@ -99,7 +121,8 @@ def test_get_location_instructions_route(client):
 
 
 def test_no_instructions_for_new_location(client):
-    rv = client.get('/api/deliveries/6/instructions')  # location 1, no captured instructions
+    rv = client.get('/api/deliveries/6/instructions')
+    # location 1, no captured instructions
     assert rv.status_code == 200
     body = rv.get_json()
     assert body['has_instructions'] is False
@@ -108,14 +131,16 @@ def test_no_instructions_for_new_location(client):
 # 4. HIGH confidence ---------------------------------------------------------
 
 def test_high_confidence_recent_success(client):
-    rv = client.get('/api/deliveries/7/instructions')  # location 2
+    rv = client.get('/api/deliveries/7/instructions')
+    # location 2
     body = rv.get_json()
     assert body['confidence'] == 'HIGH'
     assert 'success' in body['reason'].lower()
 
 
 def test_high_confidence_customer_confirmed(client):
-    rv = client.get('/api/deliveries/10/instructions')  # location 5
+    rv = client.get('/api/deliveries/10/instructions')
+    # location 5
     body = rv.get_json()
     assert body['confidence'] == 'HIGH'
     assert 'confirmed' in body['reason'].lower()
@@ -124,7 +149,8 @@ def test_high_confidence_customer_confirmed(client):
 # 5. MEDIUM confidence --------------------------------------------------------
 
 def test_medium_confidence_old_unconfirmed_success(client):
-    rv = client.get('/api/deliveries/12/instructions')  # location 7
+    rv = client.get('/api/deliveries/12/instructions')
+    # location 7
     body = rv.get_json()
     assert body['confidence'] == 'MEDIUM'
     assert 'not recently confirmed' in body['reason'].lower()
@@ -133,7 +159,8 @@ def test_medium_confidence_old_unconfirmed_success(client):
 # 6. LOW confidence -----------------------------------------------------------
 
 def test_low_confidence_previous_failure(client):
-    rv = client.get('/api/deliveries/9/instructions')  # location 4, tied to a failure
+    rv = client.get('/api/deliveries/9/instructions')
+    # location 4, tied to a failure
     body = rv.get_json()
     assert body['confidence'] == 'LOW'
     assert 'failed delivery' in body['reason'].lower()
@@ -147,7 +174,8 @@ def test_low_confidence_never_recommends_after_failure(client):
 
 
 def test_low_confidence_outdated_unconfirmed(client):
-    rv = client.get('/api/deliveries/11/instructions')  # location 6
+    rv = client.get('/api/deliveries/11/instructions')
+    # location 6
     body = rv.get_json()
     assert body['confidence'] == 'LOW'
 
@@ -188,7 +216,8 @@ def test_repeat_failure_detected(client):
     assert rv.status_code == 200
     results = rv.get_json()
     location_ids = [r['location_id'] for r in results]
-    assert 4 in location_ids  # location 4 has 2 recorded historical failures
+    assert 4 in location_ids
+    # location 4 has 2 recorded historical failures
     loc4 = next(r for r in results if r['location_id'] == 4)
     assert loc4['total_failures'] >= 2
     assert 'reasons' in loc4
@@ -247,13 +276,11 @@ def test_customer_update_creates_new_version(client):
 
 # 12. Offline synchronization -----------------------------------------------------------
 
-# 12. Offline synchronization -----------------------------------------------------------
-
 def test_offline_sync_replays_queued_outcomes(client):
     import sqlite3
 
     # Start this test with a clean version.
-    db = sqlite3.connect('database/ruralroute.db')
+    db = sqlite3.connect(DB_PATH)
     db.execute(
         "UPDATE Deliveries SET status = 'PENDING', sync_version = 1 WHERE id = 6"
     )
@@ -291,7 +318,7 @@ def test_offline_sync_detects_version_conflict(client):
     # Reset delivery 6 so this test is independent of earlier tests.
     import sqlite3
 
-    db = sqlite3.connect('database/ruralroute.db')
+    db = sqlite3.connect(DB_PATH)
     db.execute(
         "UPDATE Deliveries SET status = 'PENDING', sync_version = 1 WHERE id = 6"
     )
@@ -320,7 +347,7 @@ def test_offline_sync_detects_version_conflict(client):
     assert first_body['conflict_count'] == 0
 
     # The successful sync increments the server to version 2.
-    db = sqlite3.connect('database/ruralroute.db')
+    db = sqlite3.connect(DB_PATH)
     version = db.execute(
         "SELECT sync_version FROM Deliveries WHERE id = 6"
     ).fetchone()[0]
@@ -410,11 +437,12 @@ def test_capture_new_instruction(client):
     assert rv.status_code == 201
     assert 'instruction_id' in rv.get_json()
 
+
 def test_online_update_invalidates_old_offline_version(client):
     import sqlite3
 
     # Start with a known version.
-    db = sqlite3.connect('database/ruralroute.db')
+    db = sqlite3.connect(DB_PATH)
     db.execute(
         "UPDATE Deliveries SET status = 'PENDING', sync_version = 1 WHERE id = 6"
     )
@@ -435,7 +463,7 @@ def test_online_update_invalidates_old_offline_version(client):
     assert rv.status_code == 200
 
     # Online update should have increased the version.
-    db = sqlite3.connect('database/ruralroute.db')
+    db = sqlite3.connect(DB_PATH)
     version = db.execute(
         "SELECT sync_version FROM Deliveries WHERE id = 6"
     ).fetchone()[0]
