@@ -122,3 +122,34 @@ def test_repeat_failure_summary_contains_reasons(app):
     assert result['attempts'] > 0
     assert result['failures'] > 1
     assert len(result['reasons']) > 0
+# 10. Invalid instruction ID ---------------------------------------------
+
+def test_invalid_instruction_is_low(app):
+
+    with app.app_context():
+        result = evaluate_instruction_reliability(99999)
+
+    assert result['level'] == 'LOW'
+
+
+# 11. Missing location has no failures -----------------------------------
+
+def test_location_without_failures_is_not_repeat_failure(app):
+
+    with app.app_context():
+        result = get_location_failure_summary(1)
+
+    assert result['is_repeat_failure'] is False
+
+
+# 12. Failure summary returns expected fields ----------------------------
+
+def test_failure_summary_structure(app):
+
+    with app.app_context():
+        result = get_location_failure_summary(4)
+
+    assert 'attempts' in result
+    assert 'failures' in result
+    assert 'reasons' in result
+    assert 'is_repeat_failure' in result
