@@ -255,3 +255,57 @@ All output is explicitly labeled **"Synthetic prototype evaluation"** — see
 
 
 
+
+## Testing Details
+
+The project uses pytest for automated unit and integration testing.
+
+### Test Structure
+
+| File | Type | Coverage |
+|---|---|---|
+| backend/tests/test_api.py | API and integration tests | Authentication, deliveries, instructions, outcomes, customer confirmation, repeat failures, offline synchronization, analytics, and API error cases |
+| backend/tests/test_decision_engine.py | Unit tests | Instruction confidence, customer confirmation, previous failures, repeat-failure detection, and failure reasons |
+| backend/tests/conftest.py | Test setup | Regenerates the deterministic demo database before the test session |
+
+### Decision Engine Test Coverage
+
+The decision-engine tests verify:
+- No instruction available -> LOW confidence
+- Recent successful instruction -> HIGH confidence
+- Customer-confirmed instruction -> HIGH confidence
+- Old and unconfirmed successful instruction -> MEDIUM confidence
+- Instruction associated with a previous failure -> LOW confidence
+- Repeat failures are detected correctly
+- Repeat-failure summaries contain the recorded failure reasons
+
+### API and Integration Test Coverage
+
+The API tests verify:
+- Successful login for agent, admin, and customer roles
+- Rejection of incorrect passwords and unknown users
+- Delivery and instruction retrieval
+- Missing delivery and missing instruction cases
+- Successful and failed delivery outcomes
+- Repeat-failure detection through API endpoints
+- Customer confirmation and instruction version creation
+- Offline queued-outcome synchronization
+- Offline synchronization conflict detection using sync_version
+- Invalid delivery IDs during synchronization
+- Online updates invalidating older offline versions
+- Admin analytics and health endpoints
+
+### Error and Edge-Case Handling
+
+The automated tests cover invalid credentials, missing deliveries, unavailable instructions, invalid delivery IDs, stale offline updates, and delivery failures. These tests verify that expected errors are handled without silently applying invalid data.
+
+### Test Result
+
+Run the complete suite from the project root:
+
+    cd backend
+    pytest -q
+
+Expected result: 39 passed.
+
+The test database is regenerated automatically by conftest.py before the test session so that the tests use a reproducible dataset.
