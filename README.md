@@ -306,6 +306,6 @@ Run the complete suite from the project root:
     cd backend
     pytest -q
 
-Expected result: 39 passed.
+Expected result: 42 passed.
 
 The test database is regenerated automatically by conftest.py before the test session so that the tests use a reproducible dataset.
